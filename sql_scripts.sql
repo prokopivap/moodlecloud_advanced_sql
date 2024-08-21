@@ -2,6 +2,7 @@
 
 CREATE SCHEMA IF NOT EXISTS book;
 
+DROP TABLE IF EXISTS book.Sales_archive;
 DROP TABLE IF EXISTS book.Sales;
 DROP TABLE IF EXISTS book.Customers;
 DROP TABLE IF EXISTS book.Books;
@@ -232,36 +233,6 @@ from
 where 
   auth_cnt > 3;
 
-
-
--- CREATE OR REPLACE function book.authors_count()
---    returns setof authors
---    LANGUAGE plpgsql
--- AS $$
---   with cte_books_of_auth_cnt as (
--- 	select 
--- 	  a.name,
--- 	  count(a.author_id) as auth_cnt
--- 	from 
--- 	  book.books b 
--- 	inner join 
--- 	  book.authors a
--- 	on 
--- 	  b.author_id = a.author_id
--- 	where 
--- 	  published_date is not null
--- 	group by 
--- 	  a.name
--- )
--- select 
---   * 
--- from 
---   cte_books_of_auth_cnt
--- where 
---   auth_cnt > 3;
--- $$;
-
-
 --Task 2
 -- Create a CTE that identifies books whose titles contain the word "The" in any letter case using
 -- regular expressions. For example, books with titles like "The Great Gatsby," "The Shining", "The Old
@@ -317,11 +288,9 @@ on
 -- percentage. The procedure should also output the number of books that were updated. Use RAISE
 -- for it.
 
-
 --select * from book.books where genre_id = 2;
-
-
 --Try to add genre name in output
+
 CREATE OR REPLACE PROCEDURE book.sp_bulk_update_book_prices_by_genre(
     p_genre_id INT,
     p_percentage_change NUMERIC
@@ -349,22 +318,14 @@ CALL book.sp_bulk_update_book_prices_by_genre(2, 10)
 --Task 5
 -- Create a stored procedure that updates the join_date of each customer to the date of their first
 -- purchase if it is earlier than the current join_date. 
--- This ensures that the join_date reflects the true
+-- This ensures that the join_date reflects the true start of the customer relationship.
 -- start of the customer relationship.
---select * from book.customers;
---select * from book.sales;
 
 CREATE OR REPLACE PROCEDURE book.sp_update_customer_join_date()
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  -- select c.customer_id, c.last_name, c.join_date, s.sale_date
-  -- from book.customers c
-  -- inner join book.sales s
-  -- on c.customer_id = s.customer_id
-  -- where s.sale_date < c.join_date
-  
-  
+
   update book.customers c
     set join_date = aux.first_sales_date
     from (
@@ -384,3 +345,258 @@ END;
 $$;
 
 CALL book.sp_update_customer_join_date()
+
+--Task 6
+-- Create a function that calculates the average price of books within a specific genre.
+--select * from book.books where genre_id = 1 
+Create or replace function book.fn_avg_price_by_genre(p_genre_id INTEGER)
+returns numeric
+language plpgsql
+as $$
+declare
+    avg_price NUMERIC;
+begin
+
+    select avg(price) into avg_price
+    from book.books
+    where genre_id = p_genre_id;
+
+    return avg_price;
+end;
+$$;
+
+select book.fn_avg_price_by_genre(1)
+
+
+--Task7
+-- Create a function that returns the top N best-selling books in a specific genre, 
+-- based on total sales revenue.
+
+-- with cte_rev as (
+-- 	select b.book_id, b.title, b.genre_id, sum(b.price) as tot_rev from book.books b 
+-- 	inner join book.sales s
+-- 	on b.book_id = s.book_id 
+-- 	where b.genre_id = 5
+-- 	group by b.book_id, b.title
+-- )
+-- select c.title as book_title, c.tot_rev as total_revenue, g.genre_name as genre
+-- from cte_rev c
+-- inner join book.genres g
+-- on c.genre_id = g.genre_id
+-- limit 5
+
+
+create or replace function book.fn_get_top_n_books_by_genre(
+             p_genre_id INTEGER,
+             p_top_n INTEGER
+            )
+returns table(book_title varchar, 
+              total_revenue numeric, 
+			  genre varchar)
+language plpgsql as
+$$
+begin 
+   return query
+   
+   with cte_rev as (
+		select 
+		  b.book_id, 
+		  b.title, 
+		  b.genre_id, 
+		  sum(b.price) as tot_rev 
+		from 
+		  book.books b 
+		inner join 
+		  book.sales s
+		on 
+		  b.book_id = s.book_id 
+		where 
+		  b.genre_id = p_genre_id
+		group by 
+		  b.book_id, 
+		  b.title
+	)
+	select 
+	  c.title as book_title, 
+	  c.tot_rev as total_revenue, 
+	  g.genre_name as genre
+	from 
+	  cte_rev c
+	inner join 
+	  book.genres g
+	on 
+	  c.genre_id = g.genre_id
+	limit p_top_n;
+
+end; 
+$$; 
+
+select * from book.fn_get_top_n_books_by_genre(5, 2)
+
+
+--Task 8
+-- Create a trigger that logs any changes made to sensitive data in a Customers table. Sensitive data:
+-- first name, last name, email address. The trigger should insert a record into an audit log table each
+-- time a change is made. You need to create this log table by yourself.
+
+--DROP TABLE IF EXISTS book.customers_log;
+
+CREATE TABLE if not exists book.customers_log (
+	log_id SERIAL PRIMARY KEY,
+	column_name VARCHAR(50),
+	old_value TEXT,
+	new_value TEXT,
+	changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	changed_by VARCHAR(50) -- This assumes you can track the user making the change
+);
+
+--select * from book.customers;
+
+CREATE OR REPLACE FUNCTION book.log_customer_changes()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- first_name
+    if NEW.first_name is distinct from OLD.first_name then
+        insert into book.customers_log (column_name, old_value, new_value, changed_at, changed_by)
+        values ('first_name', OLD.first_name, NEW.first_name, current_timestamp, current_user);
+    end if;
+
+    -- last_name
+    if NEW.last_name is distinct from OLD.last_name then
+        insert into book.customers_log (column_name, old_value, new_value, changed_at, changed_by)
+        values ('last_name', OLD.last_name, NEW.last_name, current_timestamp, current_user);
+    end if;
+
+    -- email
+    if NEW.email is distinct from OLD.email then
+        insert into book.customers_log (column_name, old_value, new_value, changed_at, changed_by)
+        values ('email', OLD.email, NEW.email, current_timestamp, current_user);
+    end if;
+
+    -- Return new record
+    return new;
+END;
+$$;
+
+-- Create the trigger
+create or replace trigger tr_log_sensitive_data_changes
+after update on book.customers
+for each row
+execute function book.log_customer_changes();
+
+
+update book.customers
+set first_name = 'Alice_new', last_name = 'Smith_new', email = '"alice.smith.new@example.com"'
+where customer_id = 1;
+
+--select * from book.customers_log;
+
+--Task 9
+-- Create a trigger that automatically increases the price of a book by 10% if the total quantity sold
+-- reaches a certain threshold (e.g., 10 units). This helps to dynamically adjust pricing based on the
+-- popularity of the book.
+
+-- ADD PARAMETR TO HOW MANY PERCENTS WE HAVE TO ADD
+-- TG_NARGS and TG_ARGV!!!!!!!
+CREATE OR REPLACE FUNCTION increase_book_price_if_threshold_met()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    total_quantity_sold INTEGER;
+BEGIN
+    -- Calculate the total quantity sold for this book
+    SELECT SUM(quantity)
+    INTO total_quantity_sold
+    FROM book.Sales
+    WHERE book_id = NEW.book_id;
+
+    -- Check if the total quantity sold meets or exceeds the threshold (e.g., 10 units)
+    IF total_quantity_sold >= 10 THEN
+        
+        UPDATE book.Books
+        SET price = price * 1.10
+        WHERE book_id = NEW.book_id;
+    END IF;
+
+    -- Return NULL because this is an AFTER INSERT trigger
+    RETURN NULL;
+END;
+$$;
+
+
+CREATE TRIGGER tr_adjust_book_price
+AFTER INSERT ON book.Sales
+FOR EACH ROW
+EXECUTE FUNCTION increase_book_price_if_threshold_met();
+
+
+--select * from book.books  --Foundation -> book_id 2
+--select * from book.sales where book_id = 2
+
+INSERT INTO book.Sales (book_id, customer_id, quantity, sale_date)
+VALUES (2, 7, 5, '2023-07-30');  -- 5 books added (book "Foundation")
+--Check triggere     
+select * from book.books where book_id = 2
+
+
+
+
+--Task 10
+-- Create a stored procedure that uses a cursor to iterate over sales records older than a specific
+-- date, move them to an archive table (SalesArchive), and then delete them from the original Sales table.
+
+CREATE TABLE IF NOT EXISTS book.sales_archive (
+		    sale_id SERIAL PRIMARY KEY,
+		    book_id INTEGER NOT NULL,
+		    customer_id INTEGER NOT NULL,
+		    quantity INTEGER NOT NULL,
+		    sale_date DATE NOT NULL,
+		    FOREIGN KEY (book_id) REFERENCES book.Books(book_id),
+		    FOREIGN KEY (customer_id) REFERENCES book.Customers(customer_id)
+        );
+
+
+CREATE OR REPLACE PROCEDURE book.sp_archive_old_sales(p_cutoff_date DATE)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sales_cursor cursor for
+        select 
+		  sale_id, book_id, customer_id, quantity, sale_date
+        from 
+		  book.Sales
+        where 
+		  sale_date < p_cutoff_date;
+
+    sales_record RECORD;
+
+BEGIN
+    -- Open the cursor
+    OPEN sales_cursor;
+
+    -- Loop through each sale record older than the cutoff date
+    LOOP
+        FETCH sales_cursor INTO sales_record;
+        EXIT WHEN NOT FOUND;
+
+        -- Insert the record into the sales_archive table
+        INSERT INTO book.sales_archive (sale_id, book_id, customer_id, quantity, sale_date)
+        VALUES (sales_record.sale_id, sales_record.book_id, sales_record.customer_id, sales_record.quantity, sales_record.sale_date);
+
+		-- Delete the record from the Sales table
+        DELETE FROM book.Sales WHERE sale_id = sales_record.sale_id;
+    END LOOP;
+
+    -- Close the cursor
+    CLOSE sales_cursor;
+
+    --RAISE NOTICE 'Archiving completed for sales records older than %', p_cutoff_date;
+END;
+$$;
+
+--select * from book.sales
+
+call book.sp_archive_old_sales('2023-07-04')
