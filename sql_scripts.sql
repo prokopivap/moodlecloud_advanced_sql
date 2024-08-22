@@ -348,8 +348,7 @@ CALL book.sp_update_customer_join_date()
 
 --Task 6
 -- Create a function that calculates the average price of books within a specific genre.
---select * from book.books where genre_id = 1 
-Create or replace function book.fn_avg_price_by_genre(p_genre_id INTEGER)
+create or replace function book.fn_avg_price_by_genre(p_genre_id INTEGER)
 returns numeric
 language plpgsql
 as $$
@@ -498,7 +497,6 @@ where customer_id = 1;
 -- reaches a certain threshold (e.g., 10 units). This helps to dynamically adjust pricing based on the
 -- popularity of the book.
 
--- ADD PARAMETR TO HOW MANY PERCENTS WE HAVE TO ADD
 -- TG_NARGS and TG_ARGV!!!!!!!
 CREATE OR REPLACE FUNCTION increase_book_price_if_threshold_met()
 RETURNS TRIGGER
@@ -508,38 +506,38 @@ DECLARE
     total_quantity_sold INTEGER;
 BEGIN
     -- Calculate the total quantity sold for this book
-    SELECT SUM(quantity)
-    INTO total_quantity_sold
-    FROM book.Sales
-    WHERE book_id = NEW.book_id;
+    select sum(quantity)
+    into total_quantity_sold
+    from book.Sales
+    where book_id = NEW.book_id;
 
-    -- Check if the total quantity sold meets or exceeds the threshold (e.g., 10 units)
-    IF total_quantity_sold >= 10 THEN
+    -- Check if the total quantity sold >= threshold
+    if total_quantity_sold >= 10 then
         
-        UPDATE book.Books
-        SET price = price * 1.10
-        WHERE book_id = NEW.book_id;
-    END IF;
+        update book.Books
+        set price = price * 1.10
+        where book_id = NEW.book_id;
+    end if;
 
     -- Return NULL because this is an AFTER INSERT trigger
-    RETURN NULL;
+    return null;
 END;
 $$;
 
 
-CREATE TRIGGER tr_adjust_book_price
-AFTER INSERT ON book.Sales
-FOR EACH ROW
-EXECUTE FUNCTION increase_book_price_if_threshold_met();
+create trigger tr_adjust_book_price
+after insert on book.Sales
+for each row
+execute function increase_book_price_if_threshold_met();
 
 
 --select * from book.books  --Foundation -> book_id 2
 --select * from book.sales where book_id = 2
 
-INSERT INTO book.Sales (book_id, customer_id, quantity, sale_date)
-VALUES (2, 7, 5, '2023-07-30');  -- 5 books added (book "Foundation")
+insert into book.Sales (book_id, customer_id, quantity, sale_date)
+values (2, 7, 5, '2023-07-30');  -- 5 books added (book "Foundation")
 --Check triggere     
-select * from book.books where book_id = 2
+--select * from book.books where book_id = 2
 
 
 
@@ -573,27 +571,25 @@ DECLARE
 
     sales_record RECORD;
 
-BEGIN
-    -- Open the cursor
-    OPEN sales_cursor;
+begin
+    
+    open sales_cursor;
 
-    -- Loop through each sale record older than the cutoff date
-    LOOP
-        FETCH sales_cursor INTO sales_record;
-        EXIT WHEN NOT FOUND;
+    -- Loop through each sale record older than the parameter p_cutoff_date date
+    loop
+        fetch sales_cursor into sales_record;
+        exit when not found;
 
-        -- Insert the record into the sales_archive table
-        INSERT INTO book.sales_archive (sale_id, book_id, customer_id, quantity, sale_date)
-        VALUES (sales_record.sale_id, sales_record.book_id, sales_record.customer_id, sales_record.quantity, sales_record.sale_date);
+        -- Insert records into the sales_archive table
+        insert into book.sales_archive (sale_id, book_id, customer_id, quantity, sale_date)
+        values (sales_record.sale_id, sales_record.book_id, sales_record.customer_id, sales_record.quantity, sales_record.sale_date);
 
-		-- Delete the record from the Sales table
-        DELETE FROM book.Sales WHERE sale_id = sales_record.sale_id;
-    END LOOP;
+		-- Delete the record from Sales
+        delete from book.Sales where sale_id = sales_record.sale_id;
+    end loop;
 
-    -- Close the cursor
-    CLOSE sales_cursor;
+    close sales_cursor;
 
-    --RAISE NOTICE 'Archiving completed for sales records older than %', p_cutoff_date;
 END;
 $$;
 
